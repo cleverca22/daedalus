@@ -6,6 +6,7 @@
 #   3. 'stack'
 
 set -e
+set -x
 
 usage() {
     test -z "$1" || { echo "ERROR: $*" >&2; echo >&2; }
@@ -21,6 +22,7 @@ usage() {
 
     --travis-pr PR-ID         Travis pull request id we're building
     --nix-path NIX-PATH       NIX_PATH value
+    --api      API            which wallet to build for (etc, cardano)
 
     --upload-s3               Upload the installer to S3
     --test-install            Test the installer for installability
@@ -54,6 +56,7 @@ build_id=0
 travis_pr=true
 upload_s3=
 test_install=
+export API=cardano
 
 daedalus_version="$1"; arg2nz "daedalus version" $1; shift
 cardano_branch="$(printf '%s' "$1" | tr '/' '-')"; arg2nz "Cardano SL branch to build Daedalus with" $1; shift
@@ -73,6 +76,7 @@ do case "$1" in
                                                            travis_pr="$2"; shift;;
            --nix-path )       arg2nz "NIX_PATH value" $2;
                                                      export NIX_PATH="$2"; shift;;
+           --api )            arg2nz "API" $2; export API="$2"; shift;;
            --upload-s3 )                                   upload_s3=t;;
            --test-install )                             test_install=t;;
 
@@ -97,7 +101,16 @@ export PATH=$HOME/.local/bin:$PATH
 export DAEDALUS_VERSION=${daedalus_version}.${build_id}
 if [ -n "${NIX_SSL_CERT_FILE-}" ]; then export SSL_CERT_FILE=$NIX_SSL_CERT_FILE; fi
 
-test -d node_modules/daedalus-client-api/ -a -n "${fast_impure}" || {
+case "$API" in
+  etc)
+    test -d mantis/ -a -n "${fast_impure}" || {
+      retry 5 curl -o mantis.app.zip https://s3-eu-west-1.amazonaws.com/iohk.mantis.installer/mantis.app.zip
+      unzip mantis.app.zip
+      ls -ltrh mantis.app/
+    }
+    ;;
+  cardano)
+    test -d node_modules/daedalus-client-api/ -a -n "${fast_impure}" || {
         retry 5 curl -o daedalus-bridge.tar.xz \
               "https://s3.eu-central-1.amazonaws.com/cardano-sl-travis/daedalus-bridge-${os}-${cardano_branch}.tar.xz"
         mkdir -p node_modules/daedalus-client-api/
@@ -113,7 +126,9 @@ test -d node_modules/daedalus-client-api/ -a -n "${fast_impure}" || {
         chmod +w installers/cardano-{node,launcher}
         strip installers/cardano-{node,launcher}
         rm -f node_modules/daedalus-client-api/cardano-*
-}
+    }
+    ;;
+esac
 
 test "$(find node_modules/ | wc -l)" -gt 100 -a -n "${fast_impure}" ||
         nix-shell --run "npm install"
